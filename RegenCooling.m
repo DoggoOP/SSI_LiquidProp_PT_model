@@ -126,26 +126,41 @@ for i = 1:length(RADIUS)
     w_b(i) = (pi*d_o - N*w)/N;   %fin base width
 end
 
-f = 0.05; % friction factor
+% Surface roughness for copper (from hand calcs)
+epsilon = 0.002E-3; % 0.002 mm in meters
+
+% Initialize pressure array
+% Coolant enters at nozzle exit (index Nxtotal+1) and exits at chamber inlet (index 1)
+P_coolant_inlet = 0.1e6; % Starting guess for coolant inlet pressure (Pa) 
+Pc_coolant = zeros(1, Nxtotal+1);
+Pc_coolant(Nxtotal+1) = P_coolant_inlet; % Coolant enters at the exit end
 
 for i = 1:Nxtotal
     Tw = 298; %first guess
     Tw_new = Tw+20;
     index = Nxtotal-i+1;
 
-    %% Coolant Properties 
-    kcoolant = 0.134; % coolant thermal conductivity  --> average across experimental data 
-    rho_c = 785.26;     % coolant density kg/m^3
-    mu_c = 2.038*10^-3; % coolant viscosity 
-    %(1/1000)*10^(-0.7009+(841.5/Tc(i))-(Tc(i)*8.6068E-3)-((Tc(i)^2)*8.6068E-3));     % coolant viscosity Pa*s
-    %cp_c  = %M*(72.525+ 0.79553*Tc(index+1)-(Tc(index+1)^2)*(2.633E-3)+(3.6498E-6)*Tc(index+1)^3); % coolant heat capacity J/mol K !!!!!!!!!!!!!!!!!!!!!!!
-    cp_c = 2000; 
+    %% Coolant Properties - TEMPERATURE DEPENDENT
+    Tc_local = Tc(index+1); % Local coolant temperature
+    
+    % Temperature-dependent properties
+    % These are example correlations - you should use your coolant's actual properties
+    rho_c = 785.26 * (1 - 0.0007*(Tc_local - 298));  % density decreases with temp
+    mu_c = 2.038e-3 * exp(-0.025*(Tc_local - 298));   % viscosity decreases with temp (Arrhenius-like)
+    
+    % Or use your commented-out correlation:
+    % mu_c = (1/1000)*10^(-0.7009+(841.5/Tc_local)-(Tc_local*8.6068E-3)-((Tc_local)^2)*8.6068E-3));
+    
+    kcoolant = 0.134 * (1 + 0.0002*(Tc_local - 298)); % thermal conductivity increases slightly
+    cp_c = 2000 * (1 + 0.0005*(Tc_local - 298));      % heat capacity increases slightly
+    
     Pr_c = cp_c * mu_c / kcoolant;
-    A_c  = w * d;                      % flow area
-    Dh   = 2 * w * d / (w + d);        % hydraulic diameter
-    V_c  = mchan / (rho_c * A_c); 
-
-
+    A_c  = w * d;                      
+    Dh   = 2 * w * d / (w + d);        
+    V_c  = mchan / (rho_c * A_c);  % Velocity changes with density
+    
+    % Calculate Reynolds number with updated properties
+    Re_c = rho_c * V_c * Dh / mu_c;
 
     while abs(Tw_new-Tw) > 15 
          Tw = Tw_new;
@@ -153,10 +168,17 @@ for i = 1:Nxtotal
          sigma(index) = 1/(((0.5*(Tg(index)./T0)*(1+0.5*(k-1)*Mach(index)^2)+0.5)^0.68)*(1+ 0.5*(k-1)*Mach(index)^2)^0.12);
          hg(index) = ((0.026/dt^0.2)*((mu_g(index)^0.2)*cp_g/Pr^0.6)*((Pc*g/Cstar)^0.8)*((dt/R)^0.1))*(((0.5*dt./RADIUS(index)).^2).^0.9)*sigma(index);
          
-         Re_c = rho_c * V_c * Dh / mu_c;            %coolant Reynolds number
          %Nu_c = 0.023*(Re_c^0.8)*(Pr_c^0.4);                 %coolant Nusselt number
          % the above correlation may not be accurate for our purposes 
-         Nu_c = ((f/8)*(Re_c-1000)*Pr_c)/(1+12.7*((f/8)^0.5)*((Pr_c^2/3)-1));
+         
+         % Calculate friction factor based on flow regime
+         if Re_c < 2300 % Laminar flow
+             f = 64/Re_c;
+         else % Turbulent flow - use Colebrook approximation (Haaland equation)
+             f = 1/(-1.8*log10((epsilon/Dh/3.7)^1.11 + 6.9/Re_c))^2;
+         end
+         
+         Nu_c = ((f/8)*(Re_c-1000)*Pr_c)/(1+12.7*((f/8)^0.5)*((Pr_c^(2/3))-1));
          u_c(index) = Nu_c*kcoolant/d;                             %coolant convection coefficient
      
          % fin correction
@@ -168,45 +190,111 @@ for i = 1:Nxtotal
          q_w(index) = (Taw(index)-Tc(index+1))/H(i);
          Tw_new = Taw(index)-q_w(index)/hg(index);
     end
+    
      Twallinner(index) = Tw_new;                                 %wall inner temperature
      Q(index) = q_w(index)*pi*d; % heat flow per unit length
      %Tc(i+1) = Taw(i) - q_w(i)*H;
      qprime = q_w(index) * N * Perimeter_c;        % W/m (total heat to coolant per unit length)
      dT_c(index)   = qprime * dx / (mf * cp_c);       % mf is total coolant mass flow
      Tc(index) = Tc(index+1) + dT_c(index);
-     %Tw = Tw_new;
-
-     %% calculate pressure drop 
+     
+     %% Calculate pressure drop using friction factor from above
+     % Darcy-Weisbach equation
+     dP_dx = f * (1/Dh) * (rho_c * V_c^2 / 2);  % Pa/m
+     dP(index) = dP_dx * dx;                     % Pressure drop over this segment (Pa)
+     f_array(index) = f;                         % Store friction factor for plotting
+     Re_array(index) = Re_c;                     % Store Reynolds number
+     
+     % Accumulate pressure going upstream (coolant flows from high index to low index)
+     % Pressure increases as we move upstream against the flow
+     Pc_coolant(index) = Pc_coolant(index+1) + dP(index);
+     
 end
+
+% Total pressure drop
+Delta_P_total = Pc_coolant(1) - Pc_coolant(Nxtotal+1);
+fprintf('Total Pressure Drop: %.2f MPa (%.1f psi)\n', Delta_P_total/1e6, Delta_P_total/6894.76);
+fprintf('Inlet Pressure Required: %.2f MPa (%.1f psi)\n', Pc_coolant(1)/1e6, Pc_coolant(1)/6894.76);
+fprintf('Exit Pressure: %.2f MPa (%.1f psi)\n', Pc_coolant(Nxtotal+1)/1e6, Pc_coolant(Nxtotal+1)/6894.76);
+fprintf('Average Reynolds Number: %.0f\n', mean(Re_array));
+fprintf('Average Friction Factor: %.4f\n', mean(f_array));
+fprintf('Total Length: %.4f m\n', xtotal(end));
 
 %% PLOTS 
 
 figure()
 plot(xtotal,hg)
-ylabel('hg')
+ylabel('hg (W/m^2K)')
+xlabel('Axial Position (m)')
+title('Gas Side Heat Transfer Coefficient')
+grid on
 
 figure()
 plot(xtotal,u_c)
-ylabel('uc')
+ylabel('u_c (W/m^2K)')
+xlabel('Axial Position (m)')
+title('Coolant Heat Transfer Coefficient')
+grid on
 
 figure()
 hold on
 plot(xtotal,Twallinner)
-plot(xtotal,Tc(1:i))
-plot(xtotal, RADIUS)
+plot(xtotal,Tc(1:Nxtotal))
+plot(xtotal, RADIUS*100) % scale radius for visibility
 hold off
 ylabel('Temperature (K)')
-legend('Twall','Tcoolant','Nozzle Contour')
+xlabel('Axial Position (m)')
+legend('Twall','Tcoolant','Nozzle Contour (scaled x100)')
+title('Temperature Distribution')
+grid on
 
 figure()
 plot(xtotal, Taw)
+ylabel('Adiabatic Wall Temperature (K)')
+xlabel('Axial Position (m)')
+title('Adiabatic Wall Temperature')
+grid on
 
 figure()
 plot(xtotal,Q)
-ylabel('heat flux')
+ylabel('Heat Flux (W/m)')
+xlabel('Axial Position (m)')
+title('Heat Flux Distribution')
+grid on
 
+% Pressure drop plots
+figure()
+plot(xtotal, Pc_coolant(1:end-1)/1e6)
+xlabel('Axial Position (m)')
+ylabel('Coolant Pressure (MPa)')
+title('Coolant Channel Pressure Distribution')
+grid on
+
+figure()
+plot(xtotal, dP/1000)
+xlabel('Axial Position (m)')
+ylabel('Pressure Drop per Segment (kPa)')
+title('Local Pressure Drop Distribution')
+grid on
+
+% Additional diagnostic plots
+figure()
+plot(xtotal, Re_array)
+xlabel('Axial Position (m)')
+ylabel('Reynolds Number')
+title('Reynolds Number Distribution')
+grid on
+
+figure()
+plot(xtotal, f_array)
+xlabel('Axial Position (m)')
+ylabel('Friction Factor')
+title('Friction Factor Distribution')
+grid on
 
 [MaxWallTemp, idx] = max(Twallinner);
+fprintf('Maximum Wall Temperature: %.2f K at position %.4f m\n', MaxWallTemp, xtotal(idx));
+
 % 
 % figure()
 % plot(xtotal, u_c)
@@ -220,7 +308,5 @@ ylabel('heat flux')
 % * maybe adiabatic wall temp is calculated wrong?
 % could be units or area mismatch 
 % cool prop 
-
-
 
 % T_g*(1+(k-1)/2*M(t)^2) = T_0;
