@@ -143,20 +143,18 @@ for i = 1:Nxtotal
     Tc_local = Tc(index+1); % Local coolant temperature
     
     % Temperature-dependent properties
-    % These are example correlations - you should use your coolant's actual properties
-    rho_c = 785.26 * (1 - 0.0007*(Tc_local - 298));  % density decreases with temp
-    mu_c = 2.038e-3 * exp(-0.025*(Tc_local - 298));   % viscosity decreases with temp (Arrhenius-like)
-    
-    % Or use your commented-out correlation:
-    % mu_c = (1/1000)*10^(-0.7009+(841.5/Tc_local)-(Tc_local*8.6068E-3)-((Tc_local)^2)*8.6068E-3));
-    
-    kcoolant = 0.134 * (1 + 0.0002*(Tc_local - 298)); % thermal conductivity increases slightly
-    cp_c = 2000 * (1 + 0.0005*(Tc_local - 298));      % heat capacity increases slightly
+    rho_c = 785.26 * (1 - 0.0007*(Tc_local - 298));  
+    mu_c = 2.038e-3 * exp(-0.025*(Tc_local - 298));   
+    kcoolant = 0.134 * (1 + 0.0002*(Tc_local - 298)); 
+    cp_c = 2000 * (1 + 0.0005*(Tc_local - 298));      
     
     Pr_c = cp_c * mu_c / kcoolant;
     A_c  = w * d;                      
     Dh   = 2 * w * d / (w + d);        
-    V_c  = mchan / (rho_c * A_c);  % Velocity changes with density
+    V_c  = mchan / (rho_c * A_c);  
+    
+    % Store velocity for plotting
+    V_array(index) = V_c;  % ADD THIS LINE
     
     % Calculate Reynolds number with updated properties
     Re_c = rho_c * V_c * Dh / mu_c;
@@ -315,6 +313,27 @@ ylabel('Pressure Drop per Segment (kPa)')
 title('Local Pressure Drop Distribution')
 grid on
 
+figure()
+yyaxis left
+plot(xtotal, Pc_coolant(1:end-1)/1e6, 'LineWidth', 2)
+ylabel('Coolant Pressure (MPa)', 'FontSize', 12)
+xlabel('Axial Position (m)', 'FontSize', 12)
+ylim([min(Pc_coolant(1:end-1)/1e6)*0.95, max(Pc_coolant(1:end-1)/1e6)*1.05])
+ax = gca;
+ax.YColor = 'b';
+
+yyaxis right
+plot(xtotal, V_array, 'LineWidth', 2, 'Color', 'r')
+ylabel('Coolant Velocity (m/s)', 'FontSize', 12)
+ylim([min(V_array)*0.95, max(V_array)*1.05])
+ax = gca;
+ax.YColor = 'r';
+
+title('Coolant Pressure and Velocity Distribution', 'FontSize', 14)
+legend('Pressure', 'Velocity', 'Location', 'best')
+grid on
+
+
 % Additional diagnostic plots
 figure()
 plot(xtotal, Re_array)
@@ -332,19 +351,3 @@ grid on
 
 [MaxWallTemp, idx] = max(Twallinner);
 fprintf('Maximum Wall Temperature: %.6f K at position %.6f m\n', MaxWallTemp, xtotal(idx));
-
-% 
-% figure()
-% plot(xtotal, u_c)
-% hold on
-% plot(xtotal, u_c_f)
-% legend('uc','ucf')
-
-
-% Notes:
-% 
-% * maybe adiabatic wall temp is calculated wrong?
-% could be units or area mismatch 
-% cool prop 
-
-% T_g*(1+(k-1)/2*M(t)^2) = T_0;
