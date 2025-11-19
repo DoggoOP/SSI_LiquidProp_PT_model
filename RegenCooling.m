@@ -211,14 +211,40 @@ for i = 1:Nxtotal
      
 end
 
-% Total pressure drop
+% Total pressure drop - output with high precision
 Delta_P_total = Pc_coolant(1) - Pc_coolant(Nxtotal+1);
-fprintf('Total Pressure Drop: %.2f MPa (%.1f psi)\n', Delta_P_total/1e6, Delta_P_total/6894.76);
-fprintf('Inlet Pressure Required: %.2f MPa (%.1f psi)\n', Pc_coolant(1)/1e6, Pc_coolant(1)/6894.76);
-fprintf('Exit Pressure: %.2f MPa (%.1f psi)\n', Pc_coolant(Nxtotal+1)/1e6, Pc_coolant(Nxtotal+1)/6894.76);
-fprintf('Average Reynolds Number: %.0f\n', mean(Re_array));
-fprintf('Average Friction Factor: %.4f\n', mean(f_array));
-fprintf('Total Length: %.4f m\n', xtotal(end));
+fprintf('\n========== PRESSURE DROP RESULTS ==========\n');
+fprintf('Total Pressure Drop:\n');
+fprintf('  %.6f MPa\n', Delta_P_total/1e6);
+fprintf('  %.6f Pa\n', Delta_P_total);
+fprintf('  %.6f psi\n', Delta_P_total/6894.76);
+fprintf('  %.6f bar\n\n', Delta_P_total/1e5);
+
+fprintf('Chamber Inlet Pressure Required (Coolant Exit):\n');
+fprintf('  %.6f MPa\n', Pc_coolant(1)/1e6);
+fprintf('  %.6f Pa\n', Pc_coolant(1));
+fprintf('  %.6f psi\n', Pc_coolant(1)/6894.76);
+fprintf('  %.6f bar\n\n', Pc_coolant(1)/1e5);
+
+fprintf('Nozzle Exit Pressure (Coolant Inlet):\n');
+fprintf('  %.6f MPa\n', Pc_coolant(Nxtotal+1)/1e6);
+fprintf('  %.6f Pa\n', Pc_coolant(Nxtotal+1));
+fprintf('  %.6f psi\n', Pc_coolant(Nxtotal+1)/6894.76);
+fprintf('  %.6f bar\n\n', Pc_coolant(Nxtotal+1)/1e5);
+
+fprintf('Average Reynolds Number: %.6f\n', mean(Re_array));
+fprintf('Min Reynolds Number: %.6f\n', min(Re_array));
+fprintf('Max Reynolds Number: %.6f\n\n', max(Re_array));
+
+fprintf('Average Friction Factor: %.6f\n', mean(f_array));
+fprintf('Min Friction Factor: %.6f\n', min(f_array));
+fprintf('Max Friction Factor: %.6f\n\n', max(f_array));
+
+fprintf('Total Channel Length: %.6f m\n', xtotal(end));
+fprintf('Channel Hydraulic Diameter: %.6f mm\n', Dh*1000);
+fprintf('Channel Flow Area: %.6f mm^2\n', A_c*1e6);
+fprintf('Average Coolant Velocity: %.6f m/s\n', mean(mchan./(rho_c*A_c)));
+fprintf('==========================================\n\n');
 
 %% PLOTS 
 
@@ -293,7 +319,7 @@ title('Friction Factor Distribution')
 grid on
 
 [MaxWallTemp, idx] = max(Twallinner);
-fprintf('Maximum Wall Temperature: %.2f K at position %.4f m\n', MaxWallTemp, xtotal(idx));
+fprintf('Maximum Wall Temperature: %.6f K at position %.6f m\n', MaxWallTemp, xtotal(idx));
 
 % 
 % figure()
