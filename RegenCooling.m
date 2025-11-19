@@ -129,11 +129,10 @@ end
 % Surface roughness for copper (from hand calcs)
 epsilon = 0.002E-3; % 0.002 mm in meters
 
-% Initialize pressure array
-% Coolant enters at nozzle exit (index Nxtotal+1) and exits at chamber inlet (index 1)
-P_coolant_inlet = 0.1e6; % Starting guess for coolant inlet pressure (Pa) 
+% NEW APPROACH: Set the REQUIRED injector pressure
+% This is the pressure needed at the chamber inlet where coolant exits to the injector
+P_injector_required = 0.15e6; % 0.15 MPa = 150 kPa = 21.76 psi (example value, adjust as needed)
 Pc_coolant = zeros(1, Nxtotal+1);
-Pc_coolant(Nxtotal+1) = P_coolant_inlet; % Coolant enters at the exit end
 
 for i = 1:Nxtotal
     Tw = 298; %first guess
@@ -205,14 +204,21 @@ for i = 1:Nxtotal
      f_array(index) = f;                         % Store friction factor for plotting
      Re_array(index) = Re_c;                     % Store Reynolds number
      
-     % Accumulate pressure going upstream (coolant flows from high index to low index)
-     % Pressure increases as we move upstream against the flow
-     Pc_coolant(index) = Pc_coolant(index+1) + dP(index);
-     
+     % Don't accumulate pressure yet - we'll do that after the loop
 end
 
-% Total pressure drop - output with high precision
-Delta_P_total = Pc_coolant(1) - Pc_coolant(Nxtotal+1);
+%% Now accumulate pressure starting from the required injector pressure
+% Chamber inlet (position 1) is where coolant exits to injector
+Pc_coolant(1) = P_injector_required;
+
+% Work backwards along flow direction to find pressure at each point
+% Pressure increases going upstream (against flow direction)
+for index = 2:Nxtotal+1
+    Pc_coolant(index) = Pc_coolant(index-1) + dP(index-1);
+end
+
+% Total pressure drop
+Delta_P_total = Pc_coolant(Nxtotal+1) - Pc_coolant(1);
 fprintf('\n========== PRESSURE DROP RESULTS ==========\n');
 fprintf('Total Pressure Drop:\n');
 fprintf('  %.6f MPa\n', Delta_P_total/1e6);
@@ -220,13 +226,13 @@ fprintf('  %.6f Pa\n', Delta_P_total);
 fprintf('  %.6f psi\n', Delta_P_total/6894.76);
 fprintf('  %.6f bar\n\n', Delta_P_total/1e5);
 
-fprintf('Chamber Inlet Pressure Required (Coolant Exit):\n');
+fprintf('REQUIRED Injector Pressure (Chamber Inlet, Coolant Exit):\n');
 fprintf('  %.6f MPa\n', Pc_coolant(1)/1e6);
 fprintf('  %.6f Pa\n', Pc_coolant(1));
 fprintf('  %.6f psi\n', Pc_coolant(1)/6894.76);
 fprintf('  %.6f bar\n\n', Pc_coolant(1)/1e5);
 
-fprintf('Nozzle Exit Pressure (Coolant Inlet):\n');
+fprintf('REQUIRED Feed Pressure (Nozzle Exit, Coolant Inlet):\n');
 fprintf('  %.6f MPa\n', Pc_coolant(Nxtotal+1)/1e6);
 fprintf('  %.6f Pa\n', Pc_coolant(Nxtotal+1));
 fprintf('  %.6f psi\n', Pc_coolant(Nxtotal+1)/6894.76);
@@ -245,6 +251,12 @@ fprintf('Channel Hydraulic Diameter: %.6f mm\n', Dh*1000);
 fprintf('Channel Flow Area: %.6f mm^2\n', A_c*1e6);
 fprintf('Average Coolant Velocity: %.6f m/s\n', mean(mchan./(rho_c*A_c)));
 fprintf('==========================================\n\n');
+
+fprintf('DESIGN SUMMARY:\n');
+fprintf('If your injector requires %.2f psi,\n', Pc_coolant(1)/6894.76);
+fprintf('your pump/tank must provide at least %.2f psi\n', Pc_coolant(Nxtotal+1)/6894.76);
+fprintf('to overcome the %.2f psi friction loss in the cooling channels.\n', Delta_P_total/6894.76);
+fprintf('==========================================\n');
 
 %% PLOTS 
 
