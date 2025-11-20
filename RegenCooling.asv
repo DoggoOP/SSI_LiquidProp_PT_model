@@ -216,22 +216,21 @@ for i = 1:Nxtotal
              % Gnielinski correlation for turbulent flow
              Nu_c = ((f/8)*(Re_c-1000)*Pr_c)/(1+12.7*sqrt(f/8)*((Pr_c^(2/3))-1));
              
-            % For transition region (2300 < Re < 3500), use Gnielinski with damping
-            if Re_c < 3500
-                % Use a smoother transition based on experimental data
-                % Gnielinski works reasonably well even in transition
-                % Just ensure it doesn't go below laminar value
-                alpha = min(d,w)/max(d,w);
-                if alpha == 1
-                    Nu_laminar = 3.608;
-                else
-                    Nu_laminar = 7.541 * (1 - 2.610*alpha + 4.970*alpha^2 - ...
-                                   5.119*alpha^3 + 2.702*alpha^4 - 0.548*alpha^5);
-                end
-                
-                % Ensure Nu doesn't drop below laminar value
-                Nu_c = max(Nu_c, Nu_laminar);
-            end
+             % For transition region (2300 < Re < 4000), blend between laminar and turbulent
+             if Re_c < 4000
+                 % Calculate laminar Nu at Re=2300
+                 alpha = min(d,w)/max(d,w);
+                 if alpha == 1
+                     Nu_laminar = 3.608;
+                 else
+                     Nu_laminar = 7.541 * (1 - 2.610*alpha + 4.970*alpha^2 - ...
+                                    5.119*alpha^3 + 2.702*alpha^4 - 0.548*alpha^5);
+                 end
+                 
+                 % Linear interpolation in transition region
+                 transition_factor = (Re_c - 2300) / (4000 - 2300);
+                 Nu_c = Nu_laminar * (1 - transition_factor) + Nu_c * transition_factor;
+             end
          end
          
          u_c(index) = Nu_c*kcoolant/Dh;  % Use Dh instead of d for consistency
