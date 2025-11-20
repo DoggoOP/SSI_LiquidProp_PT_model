@@ -139,14 +139,18 @@ for i = 1:Nxtotal
     Tw_new = Tw+20;
     index = Nxtotal-i+1;
 
-    %% Coolant Properties - TEMPERATURE DEPENDENT
+    %% Coolant Properties - TEMPERATURE DEPENDENT FOR IPA
     Tc_local = Tc(index+1); % Local coolant temperature
     
-    % Temperature-dependent properties
-    rho_c = 785.26 * (1 - 0.0007*(Tc_local - 298));  
-    mu_c = 2.038e-3 * exp(-0.025*(Tc_local - 298));   
-    kcoolant = 0.134 * (1 + 0.0002*(Tc_local - 298)); 
-    cp_c = 2000 * (1 + 0.0005*(Tc_local - 298));      
+    % IPA Temperature-dependent properties
+    rho_c = 1074.4 - 0.9226*Tc_local - 0.00104*Tc_local^2;  
+    % Vogel-Fulcher-Tammann equation for IPA viscosity
+    A = -3.476;
+    B = 726.8;
+    C = 133.2;
+    mu_c = exp(A + B/(Tc_local - C)) / 1000; % Convert to Pa·s  
+    kcoolant = 0.169 - 0.000118*Tc_local; 
+    cp_c = 1873 + 4.04*Tc_local;      
     
     Pr_c = cp_c * mu_c / kcoolant;
     A_c  = w * d;                      
@@ -154,7 +158,7 @@ for i = 1:Nxtotal
     V_c  = mchan / (rho_c * A_c);  
     
     % Store velocity for plotting
-    V_array(index) = V_c;  % ADD THIS LINE
+    V_array(index) = V_c;
     
     % Calculate Reynolds number with updated properties
     Re_c = rho_c * V_c * Dh / mu_c;
@@ -165,9 +169,6 @@ for i = 1:Nxtotal
          sigma(index) = 1/(((0.5*(Tg(index)./T0)*(1+0.5*(k-1)*Mach(index)^2)+0.5)^0.68)*(1+ 0.5*(k-1)*Mach(index)^2)^0.12);
          hg(index) = ((0.026/dt^0.2)*((mu_g(index)^0.2)*cp_g/Pr^0.6)*((Pc*g/Cstar)^0.8)*((dt/R)^0.1))*(((0.5*dt./RADIUS(index)).^2).^0.9)*sigma(index);
          
-         %Nu_c = 0.023*(Re_c^0.8)*(Pr_c^0.4);                 %coolant Nusselt number
-         % the above correlation may not be accurate for our purposes 
-         
          % Calculate friction factor based on flow regime
          if Re_c < 2300 % Laminar flow
              f = 64/Re_c;
@@ -175,8 +176,64 @@ for i = 1:Nxtotal
              f = 1/(-1.8*log10((epsilon/Dh/3.7)^1.11 + 6.9/Re_c))^2;
          end
          
-         Nu_c = ((f/8)*(Re_c-1000)*Pr_c)/(1+12.7*((f/8)^0.5)*((Pr_c^(2/3))-1));
-         u_c(index) = Nu_c*kcoolant/d;                             %coolant convection coefficient
+         % Calculate Nusselt number based on flow regime - CORRECTED
+         if Re_c < 2300 % Laminar flow
+             % For rectangular channels, use Shah correlation
+             % For developing laminar flow with constant heat flux
+             alpha = min(d,w)/max(d,w); % aspect ratio (always <= 1)
+             
+             % Shah correlation for fully developed laminar flow in rectangular ducts
+             if alpha == 1 % Square channel
+                 Nu_laminar_fd = 3.608; % Fully developed Nu for square duct
+             else
+                 % Interpolation for rectangular ducts
+                 Nu_laminar_fd = 7.541 * (1 - 2.610*alpha + 4.970*alpha^2 - ...
+                                5.119*alpha^3 + 2.702*alpha^4 - 0.548*alpha^5);
+             end
+             
+             % Account for thermal entry length effects
+             % For developing flow, Nu can be higher
+             % Gz = (D_h/x) * Re * Pr (Graetz number)
+             x_thermal = i * dx; % distance from entrance
+             if x_thermal < 0.001
+                 x_thermal = 0.001; % Avoid division by zero
+             end
+             Gz = (Dh / x_thermal) * Re_c * Pr_c;
+             
+             if Gz > 100 % Developing flow
+                 % Use Hausen correlation for entry length
+                 Nu_c = 3.66 + (0.0668 * Gz) / (1 + 0.04 * Gz^(2/3));
+             else % Fully developed
+                 Nu_c = Nu_laminar_fd;
+             end
+             
+             % Ensure minimum Nusselt number
+             if Nu_c < 3.0
+                 Nu_c = 3.0;
+             end
+             
+         else % Turbulent flow (Re >= 2300)
+             % Gnielinski correlation for turbulent flow
+             Nu_c = ((f/8)*(Re_c-1000)*Pr_c)/(1+12.7*sqrt(f/8)*((Pr_c^(2/3))-1));
+             
+             % For transition region (2300 < Re < 4000), blend between laminar and turbulent
+             if Re_c < 4000
+                 % Calculate laminar Nu at Re=2300
+                 alpha = min(d,w)/max(d,w);
+                 if alpha == 1
+                     Nu_laminar = 3.608;
+                 else
+                     Nu_laminar = 7.541 * (1 - 2.610*alpha + 4.970*alpha^2 - ...
+                                    5.119*alpha^3 + 2.702*alpha^4 - 0.548*alpha^5);
+                 end
+                 
+                 % Linear interpolation in transition region
+                 transition_factor = (Re_c - 2300) / (4000 - 2300);
+                 Nu_c = Nu_laminar * (1 - transition_factor) + Nu_c * transition_factor;
+             end
+         end
+         
+         u_c(index) = Nu_c*kcoolant/Dh;  % Use Dh instead of d for consistency
      
          % fin correction
          m = sqrt(2*u_c(index)*w_b(index)/(kwall));                %fin parameter
@@ -186,11 +243,13 @@ for i = 1:Nxtotal
          H(i) = (1/u_c_f(index) + 1/hg(index) + tw/kwall);%corrected bulk convection coefficient
          q_w(index) = (Taw(index)-Tc(index+1))/H(i);
          Tw_new = Taw(index)-q_w(index)/hg(index);
+         
+         % Store Nu for diagnostics
+         Nu_array(index) = Nu_c;
     end
     
      Twallinner(index) = Tw_new;                                 %wall inner temperature
      Q(index) = q_w(index)*pi*d; % heat flow per unit length
-     %Tc(i+1) = Taw(i) - q_w(i)*H;
      qprime = q_w(index) * N * Perimeter_c;        % W/m (total heat to coolant per unit length)
      dT_c(index)   = qprime * dx / (mf * cp_c);       % mf is total coolant mass flow
      Tc(index) = Tc(index+1) + dT_c(index);
@@ -240,6 +299,10 @@ fprintf('Average Reynolds Number: %.6f\n', mean(Re_array));
 fprintf('Min Reynolds Number: %.6f\n', min(Re_array));
 fprintf('Max Reynolds Number: %.6f\n\n', max(Re_array));
 
+fprintf('Average Nusselt Number: %.6f\n', mean(Nu_array));
+fprintf('Min Nusselt Number: %.6f\n', min(Nu_array));
+fprintf('Max Nusselt Number: %.6f\n\n', max(Nu_array));
+
 fprintf('Average Friction Factor: %.6f\n', mean(f_array));
 fprintf('Min Friction Factor: %.6f\n', min(f_array));
 fprintf('Max Friction Factor: %.6f\n\n', max(f_array));
@@ -247,7 +310,6 @@ fprintf('Max Friction Factor: %.6f\n\n', max(f_array));
 fprintf('Total Channel Length: %.6f m\n', xtotal(end));
 fprintf('Channel Hydraulic Diameter: %.6f mm\n', Dh*1000);
 fprintf('Channel Flow Area: %.6f mm^2\n', A_c*1e6);
-fprintf('Average Coolant Velocity: %.6f m/s\n', mean(mchan./(rho_c*A_c)));
 fprintf('==========================================\n\n');
 
 fprintf('DESIGN SUMMARY:\n');
@@ -274,9 +336,9 @@ grid on
 
 figure()
 hold on
-plot(xtotal,Twallinner)
-plot(xtotal,Tc(1:Nxtotal))
-plot(xtotal, RADIUS*100) % scale radius for visibility
+plot(xtotal,Twallinner, 'LineWidth', 2)
+plot(xtotal,Tc(1:Nxtotal), 'LineWidth', 2)
+plot(xtotal, RADIUS*100, 'LineWidth', 1) % scale radius for visibility
 hold off
 ylabel('Temperature (K)')
 xlabel('Axial Position (m)')
@@ -333,7 +395,6 @@ title('Coolant Pressure and Velocity Distribution', 'FontSize', 14)
 legend('Pressure', 'Velocity', 'Location', 'best')
 grid on
 
-
 % Additional diagnostic plots
 figure()
 plot(xtotal, Re_array)
@@ -343,6 +404,16 @@ title('Reynolds Number Distribution')
 grid on
 
 figure()
+plot(xtotal, Nu_array, 'LineWidth', 2)
+xlabel('Axial Position (m)')
+ylabel('Nusselt Number')
+title('Nusselt Number Distribution')
+grid on
+hold on
+yline(3.608, 'r--', 'Laminar Fully Developed', 'LineWidth', 1.5)
+hold off
+
+figure()
 plot(xtotal, f_array)
 xlabel('Axial Position (m)')
 ylabel('Friction Factor')
@@ -350,4 +421,43 @@ title('Friction Factor Distribution')
 grid on
 
 [MaxWallTemp, idx] = max(Twallinner);
+
+% DIAGNOSTIC PLOT
+figure()
+subplot(4,1,1)
+plot(xtotal, Taw, 'LineWidth', 2)
+ylabel('T_{aw} (K)')
+title('Adiabatic Wall Temperature')
+grid on
+
+subplot(4,1,2)
+plot(xtotal, hg, 'LineWidth', 2)
+ylabel('h_g (W/m^2K)')
+title('Gas Side Heat Transfer Coefficient')
+grid on
+
+subplot(4,1,3)
+plot(xtotal, Tc(1:Nxtotal), 'LineWidth', 2)
+ylabel('T_c (K)')
+title('Coolant Bulk Temperature')
+grid on
+
+subplot(4,1,4)
+plot(xtotal, Twallinner, 'LineWidth', 2)
+hold on
+plot(xtotal, Taw, '--')
+ylabel('Temperature (K)')
+xlabel('Axial Position (m)')
+title('Wall and Adiabatic Temperatures')
+legend('T_{wall}', 'T_{aw}')
+grid on
+
+% Add vertical line at throat
+throat_position = Lcyl + Lconverge;
+for i = 1:4
+    subplot(4,1,i)
+    hold on
+    xline(throat_position, 'r--', 'Throat', 'LineWidth', 1.5)
+end
+
 fprintf('Maximum Wall Temperature: %.6f K at position %.6f m\n', MaxWallTemp, xtotal(idx));
